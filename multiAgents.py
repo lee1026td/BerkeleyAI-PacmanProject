@@ -17,8 +17,6 @@ import random, util
 
 from game import Agent
 from pacman import GameState
-DEBUG = False
-
 
 class ReflexAgent(Agent):
     """
@@ -30,7 +28,6 @@ class ReflexAgent(Agent):
     headers.
     """
 
-    
 
     def getAction(self, gameState: GameState):
         """
@@ -139,7 +136,6 @@ class ReflexAgent(Agent):
             currentPacmanDir == Directions.SOUTH and action == Directions.NORTH) :
             score -= 1.0
 
-        print(f"[Score] {score}") if DEBUG else None
         return score
 
 def scoreEvaluationFunction(currentGameState: GameState):
@@ -333,6 +329,59 @@ class ExpectimaxAgent(MultiAgentSearchAgent):
       Your expectimax agent (question 4)
     """
 
+    def isTerminalState(self, gameState: GameState, depth) :
+        return gameState.isWin() or gameState.isLose() or (depth >= self.depth)
+
+    def maxValue(self, gameState: GameState, depth) :
+        legalActions = gameState.getLegalActions(0)
+
+        if not legalActions :
+            return self.evaluationFunction(gameState), None
+
+        value, bestAction = float('-inf'), None
+
+        for action in legalActions :
+            successorState = gameState.generateSuccessor(0, action)
+            
+            val, _ = self.value(successorState, depth, agentIdx=1)
+
+            if val > value :
+                value, bestAction = val, action
+
+        return value, bestAction
+
+    def expectedValue(self, gameState: GameState, depth, agentIdx) :
+        legalActions = gameState.getLegalActions(agentIdx)
+
+        if not legalActions :
+            return self.evaluationFunction(gameState), None
+        
+        numAgent = gameState.getNumAgents()
+
+        prob = 1.0 / float(len(legalActions))
+        expected = 0.0
+
+        for action in legalActions :
+            successorState = gameState.generateSuccessor(agentIdx, action)
+
+            nextAgent = (agentIdx + 1) % numAgent
+            nextDepth = depth + (1 if nextAgent == 0 else 0)
+
+            val, _ = self.value(successorState, nextDepth, nextAgent)
+
+            expected += prob * float(val)
+
+        return expected, None
+
+    def value(self, gameState: GameState, depth, agentIdx) :
+        if self.isTerminalState(gameState, depth) :
+            return self.evaluationFunction(gameState), None
+
+        if agentIdx == 0 :
+            return self.maxValue(gameState, depth)
+        else :
+            return self.expectedValue(gameState, depth, agentIdx)
+
     def getAction(self, gameState: GameState):
         """
         Returns the expectimax action using self.depth and self.evaluationFunction
@@ -341,45 +390,111 @@ class ExpectimaxAgent(MultiAgentSearchAgent):
         legal moves.
         """
         "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+        _, bestAction = self.value(gameState, depth=0, agentIdx=0)
+        return bestAction
 
 def betterEvaluationFunction(currentGameState: GameState):
     """
-    Your extreme ghost-hunting, pellet-nabbing, food-gobbling, unstoppable
-    evaluation function (question 5).
+      Your extreme ghost-hunting, pellet-nabbing, food-gobbling, unstoppable
+      evaluation function (question 5).
 
-    DESCRIPTION: <write something here so we know what you did>
+      DESCRIPTION: <write something here so we know what you did>
     """
     "*** YOUR CODE HERE ***"
-    pacmanPos = currentGameState.getPacmanPosition()
-    foodList = currentGameState.getFood().asList()
-    capsuleList = currentGameState.getCapsules()
-    ghostStates = currentGameState.getGhostStates()
-    
+
+    currentPos = currentGameState.getPacmanPosition()
+    currentFood = currentGameState.getFood()
+    currentCapsules = currentGameState.getCapsules()
+    currentGhostStates = currentGameState.getGhostStates()
+
     score = currentGameState.getScore()
 
-    if foodList :
-        closestFoodDistance = min(util.manhattanDist(pacmanPos, food) for food in foodList)
-        remainingFoods = len(foodList)
+    currentFoodList = currentFood.asList()
 
-        score += 3.5 * (1.0 / (closestFoodDistance + 1)) - 0.5 * remainingFoods
+    "for foods"
+    if currentFoodList :
+        foodDists = [util.manhattanDist(currentPos, food) for food in currentFoodList]
+        closestFoodDist = min(foodDists)
 
-    aliveGhosts = [g for g in ghostStates if g.scaredTimer == 0]
-    scaredGhosts = [g for g in ghostStates if g.scaredTimer > 0]
+        "consider average distance of 3 nearest foods for better planning"
+        avgNearestFoodDist = sum(sorted(foodDists)[:min(3, len(foodDists))]) / min(3, len(foodDists))
 
+        score += 10.0 / (closestFoodDist + 1)       # high bonus for getting close to closest food
+        score += 5.0 / (avgNearestFoodDist + 1)     # little lower bonus for getting close to 3 nearest foods
+
+        score -= 4.0 * len(currentFoodList)         # penalty for remaining foods
+    else :
+        score += 500                                # if there is no remaining foods, give high bonus
+
+
+    "for ghosts"
+    aliveGhosts = [g for g in currentGhostStates if g.scaredTimer == 0]
+    scaredGhosts = [g for g in currentGhostStates if g.scaredTimer > 0]
+
+    "for alive ghosts"
     if aliveGhosts :
-        closestAliveGhostDist = min(util.manhattanDist(pacmanPos, g.getPosition()) for g in aliveGhosts)
+        aliveGhostDists = [util.manhattanDist(currentPos, g.getPosition()) for g in aliveGhosts]
+        closestAliveGhostDist = min(aliveGhostDists)
 
-        if closestAliveGhostDist < 2 :
-            score -= 500.0
+        '''
+        when the distance between pacman and closest ghost is less than 1, give high penalty (-1000)
+        for the distance of 2, little bit lower penalty
+        for the distance of 4 or more, give penalty in inverse proportion to distance
+        '''
+        if closestAliveGhostDist <= 1 :
+            score -= 1000
+        elif closestAliveGhostDist == 2 :
+            score -= 300
+        elif closestAliveGhostDist <= 4 :
+            score -= 100 / closestAliveGhostDist
         else :
-            score -= 4.0 * (1.0 / closestAliveGhostDist)
-    
-    if scaredGhosts :
-        closestScaredGhostDist = min(util.manhattanDist(pacmanPos, g.getPosition()) for g in scaredGhosts)
+            score -= 10 / closestAliveGhostDist
 
-        score += 6.0 * (1.0 / closestScaredGhostDist)
+        "consider second closest ghost too"
+        if len(aliveGhostDists) > 1 :
+            secondClosestDist = sorted(aliveGhostDists)[1]
+            if secondClosestDist <= 3 :
+                score -= 50 / secondClosestDist
+
+    "for scared ghosts"
+    if scaredGhosts :
+        for scaredGhost in scaredGhosts :
+            scaredGhostDist = util.manhattanDist(currentPos, scaredGhost.getPosition())
+            scaredTime = scaredGhost.scaredTimer
+
+            '''
+            if there is enough time to get scared ghost, chase the scared one
+            '''
+            if scaredTime > scaredGhostDist :
+                score += 200 / (scaredGhostDist + 1)                # to chase the scared ghost
+                score += min(scaredTime - scaredGhostDist, 10) * 5  # when the pacman catches the scared ghost in enough time remains, give bonus
+            else :
+                if scaredGhostDist <= 2 :                           # if there is not sufficient time, move carefully
+                    score -= 50
+
+    "for capsules"
+    if currentCapsules :
+        capsuleDists = [util.manhattanDist(currentPos, capsule) for capsule in currentCapsules]
+        closestCapsuleDist = min(capsuleDists)
+
+        "if there are alive ghosts in nearby, prefer capsules more"
+        if aliveGhosts :
+            closestAliveGhostdist = min(util.manhattanDist(currentPos, g.getPosition()) for g in aliveGhosts)
+
+            if closestAliveGhostDist <= 5 :
+                score += 150 / (closestCapsuleDist + 1)     # ghost is too close, get capsule
+            else :
+                score += 50 / (closestCapsuleDist + 1)      # less dangerous situation
+
+        else :
+            score += 30 / (closestCapsuleDist + 1)          # there is no alive ghost : lower priority on capsule
     
+        score -= 20 * len(currentCapsules)                  # penalty for remaining capsules
+
+    "if all of the ghosts are scared, play more aggressive"
+    if scaredGhosts and not aliveGhosts :
+        score += 100
+
     return score
 
 # Abbreviation
